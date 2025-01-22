@@ -1,0 +1,279 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>I2C Analysis Report</title>
+    <script src="d.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<script>
+
+function hexstr(value, len)
+{
+    len = len || 2
+    return value.toString(16).toUpperCase().padStart(len, "0")
+}
+
+function report_summary(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Setup"))
+
+    let t = d.ce("table", { "className" : "setup" });
+
+    d.ac(t, d.a2tr(["SCL file", data.info.scl_file]));
+    d.ac(t, d.a2tr(["SDA file", data.info.sda_file]));
+
+    d.ac(t, d.a2tr(["Voltage", data.bus.voltage.toFixed(3), "V"]));
+    d.ac(t, d.a2tr(["Threshold High", data.bus.threshold_hi.toFixed(3), "V"]));
+    d.ac(t, d.a2tr(["Threshold Low", data.bus.threshold_lo.toFixed(3), "V"]));
+
+    d.ac(t, d.a2tr(["Samples", data.info.samples]));
+    d.ac(t, d.a2tr(["Sample rate", data.info.samplerate, "1/s"]));
+    d.ac(t, d.a2tr(["Recording Duration", data.info.samples / data.info.samplerate, "s"]));
+
+    return d.acp(df, t);
+}
+
+function report_devices(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Devices"))
+
+    let t = d.ce("table", { "className" : "devices" });
+
+    d.ac(t, d.a2tr(["Address", "Writes", "Reads"], true));
+    data.bus.addresses.forEach(item => {
+        d.ac(t, d.a2tr([`0x${hexstr(item.address)}` , item.writes, item.reads], false));
+    });
+
+    return d.acp(df, t);
+}
+
+function report_transactions(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Transactions"))
+
+    let t = d.ce("table", { "className" : "transactions" });
+
+    d.ac(t, d.a2tr(["Start [s]", "Stop [s]", "Address", "R/W", "ACK", "Data"], true));
+    data.transactions.forEach(item => 
+    {
+        let cols = [];
+        cols.push(item.start == null ? "n/a" : item.start.time.toFixed(6));
+        cols.push(item.stop == null ? "n/a" : item.stop.time.toFixed(6));
+        if(item.address == null)
+        {
+            cols.push(...Array(3).fill("n/a"));
+        }
+        else
+        {
+            cols.push(...[
+                `0x${hexstr(item.address.value)}`,
+                item.address.read == true ? "R" : "W",
+                item.address.ack == true ? "ACK" : "NAK",
+                //complete
+            ]);
+        }
+
+        cols.push(item.data.map(di => `${hexstr(di.value)}${di.ack ? "a" : "n"}${di.complete ? "": "!!"}` ).join(" "));
+        d.ac(t, d.a2tr(cols, false));
+    });
+
+    return d.acp(df, t);
+}
+
+function report_bitstats(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Bit statistics"));
+
+    const bitstats_data = (bs, title, item, digits, unit, formula) => {
+        digits = digits || 0;
+        unit = unit || "";
+        
+
+        const f = (rw) => 
+        {
+            if(bs[rw] == null)
+            {
+                return "n/a";
+            }
+            else
+            {
+                let value = bs[rw].info[item];
+                if(value == null)
+                {
+                    return "n/a";
+                }
+                else
+                {
+                    if(formula != undefined) 
+                    value = formula(value);
+                    return value.toFixed(digits);
+                }
+            }
+        }
+
+        return d.a2tr([title, f("read"), f("write"), unit]);
+    }
+
+    data.bitstats.forEach(bitstats => 
+    {
+        d.ac(df, d.acp(d.ce("h3"), `Device 0x${hexstr(bitstats.address)}`));
+
+        { // Figures
+            let t = d.ce("table", { "className" : "bitstats-img" });
+            let cols = ["", ""];
+            if(bitstats.read != null)
+            {
+                cols[0] = d.ce("img", { "src" : bitstats.read.filename })
+            }
+            if(bitstats.write != null)
+            {
+                cols[1] = d.ce("img", { "src" : bitstats.write.filename })
+            }
+            d.ac(t, d.a2tr(cols));
+            d.ac(df, t);
+
+        }
+
+
+        { // Data
+            let t = d.ce("table", { "className" : "bitstats-data" });
+            d.ac(t, d.a2tr(["Parameter", "Read", "Write", "Unit"], true));
+
+            d.ac(t, d.a2tr(["Waveforms", bitstats.read.waveforms, bitstats.write.waveforms, ""]));
+            d.ac(t, bitstats_data(bitstats, "Min", "min", 3, "V"));
+
+            d.ac(t, bitstats_data(bitstats, "Low", "low_value", 3, "V"));
+            d.ac(t, bitstats_data(bitstats, "Stddev(Low)", "low_stddev", 3, "mV", x => x * 1000));
+            d.ac(t, bitstats_data(bitstats, "Count(Low)", "low_count"));
+
+            d.ac(t, bitstats_data(bitstats, "High", "high_value", 3, "V"));
+            d.ac(t, bitstats_data(bitstats, "Stddev(High)", "high_stddev", 3, "mV", x => x * 1000));
+            d.ac(t, bitstats_data(bitstats, "Count(High)", "high_count"));
+            
+            d.ac(t, bitstats_data(bitstats, "Min", "min", 3, "V"));
+
+            d.ac(df, t);
+        }
+
+        if(bitstats.read.info.warnings.length > 0)
+        {
+            d.ac(df, d.acp(d.ce("h4"), "Warnings for Reads"));
+            d.ac(df, d.acp(d.ce("ul"), bitstats.read.info.warnings.map(w => d.acp(d.ce("li"), w))));
+        }
+
+        if(bitstats.write.info.warnings.length > 0)
+        {
+            d.ac(df, d.acp(d.ce("h4"), "Warnings for Writes"));
+            d.ac(df, d.acp(d.ce("ul"), bitstats.write.info.warnings.map(w => d.acp(d.ce("li"), w))));
+        }
+
+    });
+    return df;
+}
+
+function report_crosstalk(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Crosstalk"));
+
+    //yolo!
+    data.crosstalk.forEach(item => 
+    {
+        d.ac(df, d.ce("img", { "src" : item.filename, "alt" : item.title }));
+    });
+
+    return df;
+}
+
+function report_transitiontimes(data)
+{
+    let df = d.cdf();
+    d.ac(df, d.acp(d.ce("h2"), "Signal transition times"));
+    data = Object.values(data.transitiontimes);
+
+    const trtime_data = (td, title, item, digits, unit, formula) => {
+        digits = digits || 0;
+        unit = unit || "";
+        
+
+        const f = (rf) => 
+        {
+            if(td[rf] == null)
+            {
+                return "n/a";
+            }
+            else
+            {
+                let value = td[rf][item];
+                if(value == null)
+                {
+                    return "n/a";
+                }
+                else
+                {
+                    if(formula != undefined) 
+                    value = formula(value);
+                    return value.toFixed(digits);
+                }
+            }
+        }
+
+        return d.a2tr([title, f("fall"), f("rise"), unit]);
+    }
+
+    const trs_statstable = (item) => 
+    {
+        let tmp = d.cdf();
+        d.ac(tmp, d.acp(d.ce("h3"), (item.address == undefined) ? "Summary" : `Device 0x${hexstr(item.address)}`))
+        let t = d.ce("table", { "className" : "trtime-data" });
+        d.ac(t, d.a2tr(["Parameter", "Falling edge", "Rising edge", "Unit"], true));
+
+        d.ac(t, trtime_data(item, "Samples", "len"));
+        d.ac(t, trtime_data(item, "Min", "min", 3, "ns"));
+        d.ac(t, trtime_data(item, "Avg", "avg", 3, "ns"));
+        d.ac(t, trtime_data(item, "Mode", "mode", 3, "ns"));
+        d.ac(t, trtime_data(item, "Median", "median", 3, "ns"));
+        d.ac(t, trtime_data(item, "Max", "max", 3, "ns"));
+
+        return d.acp(tmp, t);
+    }
+
+    data.forEach(item => 
+    {
+        d.ac(df, d.acp(d.ce("h2"), item.signal));
+        d.ac(df, d.ce("img", { "src" : item.filename, "alt" : `Transition times for ${item.signal}` }));
+
+        d.ac(df, trs_statstable(item));
+
+        item.devices.forEach(subitem => 
+        {
+            d.ac(df, trs_statstable(subitem));
+        })
+    });
+
+    return df;
+}
+
+function report(data)
+{
+    d.ac(d.d.body, d.acp(d.ce("h1"), "I2C Analysis Report"));
+    d.ac(d.d.body, report_summary(data));
+    d.ac(d.d.body, report_devices(data));
+    d.ac(d.d.body, report_transactions(data));
+    d.ac(d.d.body, report_bitstats(data));
+    d.ac(d.d.body, report_crosstalk(data));
+    d.ac(d.d.body, report_transitiontimes(data));
+    
+}
+
+</script>
+<script src="report.jsonc" type="text/javascript"></script>
+
+</body>
+</html>
